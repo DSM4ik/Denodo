@@ -1,0 +1,40 @@
+# Generated with Denodo Platform 8.0 update 20220126.
+
+CREATE OR REPLACE VIEW load_dwh_qdg_qdg_mf_upd FOLDER = '/2. business/депозиты/load_депозиты'
+    PRIMARY KEY ( 'iqdgident' , 'date_beg' ) AS 
+
+SELECT 
+		dwh.iqdgident as iqdgident
+        ,dwh.cqdgacc as cqdgacc
+        ,dwh.cqdgaccacc as cqdgaccacc
+        ,dwh.date_beg
+        ,case when bv_source.dqdgcls < to_localdate('dd.MM.yyyy', p_sdate)
+              then bv_source.dqdgcls
+              else addday(to_localdate('dd.MM.yyyy', p_sdate), -1)
+         end  AS date_end
+        ,localtimestamp() AS change_dttm
+        ,p_sdate
+        
+FROM bv_xxi_qdg_qdg_mf AS bv_source 
+	 RIGHT OUTER JOIN dwh_qdg_qdg_mf AS dwh ON bv_source.iqdgident = dwh.iqdgident
+     
+     WHERE  (to_localdate('dd.MM.yyyy', p_sdate) between addday(dwh.date_beg, 1) AND dwh.date_end
+       												  AND NOT (
+                                                        	   	bv_source.cqdgacc = dwh.cqdgacc AND
+                                                     	        bv_source.cqdgaccacc = dwh.cqdgaccacc                                                    	                                                    		                               )
+  		     )  
+             
+             OR 
+             
+             (
+              bv_source.iqdgident is null  AND 
+              dwh.date_end = case when bv_source.dqdgcls < to_localdate('dd.MM.yyyy', p_sdate)
+                                then bv_source.dqdgcls
+                                else addday(to_localdate('dd.MM.yyyy', p_sdate), -1)
+                              end
+             )
+USING PARAMETERS ( p_sdate : text) 
+CONTEXT ('formatted' = 'yes');
+
+ALTER VIEW load_dwh_qdg_qdg_mf_upd
+ LAYOUT (dwh_qdg_qdg_mf = [292, 141, 200, 200], bv_xxi_qdg_qdg_mf = [650, 128, 200, 200]);
