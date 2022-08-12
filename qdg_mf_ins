@@ -1,0 +1,55 @@
+# Generated with Denodo Platform 8.0 update 20220126.
+
+CREATE OR REPLACE VIEW load_dwh_qdg_qdg_mf_ins FOLDER = '/2. business/депозиты/load_депозиты' DESCRIPTION = 'Представление для вставки новых данных по депозитам в хранилище 
+                                               				  при изменении вектора договора или появления нового 																	  																  договора' 
+    PRIMARY KEY ( 'iqdgident' , 'date_beg' ) AS 
+
+SELECT 
+		bv_source.iqdgident as iqdgident
+        ,bv_source.cqdgacc as cqdgacc
+        ,bv_source.cqdgaccacc as cqdgaccacc
+        ,case WHEN dwh.iqdgident is null and dwh_old.iqdgident is null THEN bv_source.dqdgpodp ELSE to_localdate('dd.MM.yyyy', p_sdate) END AS date_beg
+        ,case WHEN bv_source.dqdgcls is null THEN to_localdate('dd.MM.yyyy', '01.01.5555') else bv_source.dqdgcls END   AS date_end
+        ,localtimestamp() AS change_dttm
+        ,p_sdate
+        
+FROM bv_xxi_qdg_qdg_mf AS bv_source 
+	 LEFT OUTER JOIN dwh_qdg_qdg_mf AS dwh ON  bv_source.iqdgident = dwh.iqdgident --key
+     												  AND 
+                                                      (--vector
+       												  bv_source.cqdgacc = dwh.cqdgacc 
+                                                      AND  
+                                                      bv_source.cqdgaccacc = dwh.cqdgaccacc
+                                                      )
+                                                      AND addday(to_localdate('dd.MM.yyyy', p_sdate), -1) between dwh.date_beg AND dwh.date_end
+     LEFT OUTER JOIN (
+       				  select distinct -- этот раздел отвечает за начало открытия действия вектора date_beg)
+       					     dwh1.iqdgident,
+       						 max(dwh1.date_beg) as date_beg
+       			  	  from dwh_qdg_qdg_mf as dwh1
+       	              where dwh1.date_end <= addday(to_localdate('dd.MM.yyyy', p_sdate), -1)
+       					    or dwh1.date_end = to_localdate('dd.MM.yyyy', '01.01.5555')
+       			      group by dwh1.iqdgident
+     				 ) 
+                      as dwh_old on bv_source.iqdgident = dwh_old.iqdgident
+                     
+
+WHERE  dwh.iqdgident is NULL
+	   and
+       
+       --доп условие на закрытие депозита (date_beg <= date_end)
+       (case WHEN dwh.iqdgident is null and dwh_old.iqdgident is null 
+         THEN bv_source.dqdgpodp 
+         ELSE to_localdate('dd.MM.yyyy', p_sdate) END)
+       <=
+       (case WHEN bv_source.dqdgcls is null 
+         THEN to_localdate('dd.MM.yyyy', '01.01.5555') 
+         ELSE bv_source.dqdgcls END)
+         
+       
+
+USING PARAMETERS ( p_sdate : text) 
+CONTEXT ('formatted' = 'yes');
+
+ALTER VIEW load_dwh_qdg_qdg_mf_ins
+ LAYOUT (bv_xxi_qdg_qdg_mf = [299, 114, 200, 200], dwh_qdg_qdg_mf = [658, 232, 200, 200]);
