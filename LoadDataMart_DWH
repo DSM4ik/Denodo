@@ -1,0 +1,400 @@
+package su.jet.denodo;
+/**
+ * Добавление параметра отвечающего за использование БД Denodo.
+ * Параметр:
+ * new StoredProcedureParameter("p_source", Types.VARCHAR, StoredProcedureParameter.DIRECTION_IN),
+ *
+ * используемая переменная в методе doCall:
+ * source
+ *
+ * пример Select-а с используемым параметром
+ * "UPDATE " + source.toString() + ".etl_rtl_data_mart_runs SET rtldmr_status=?, rtldmr_endtime= ?, rtldmr_rows = ? WHERE rtldmr_id = ?";
+ *
+ *
+ */
+
+import com.denodo.vdb.engine.storedprocedure.AbstractStoredProcedure;
+import com.denodo.vdb.engine.storedprocedure.StoredProcedureException;
+import com.denodo.vdb.engine.storedprocedure.StoredProcedureParameter;
+import com.denodo.vdb.engine.storedprocedure.Transaction;
+
+import java.math.BigInteger;
+import java.sql.Types;
+import java.sql.Date;
+import java.sql.Timestamp;
+
+import java.sql.ResultSet;
+import java.sql.Array;
+
+import java.sql.SQLException;
+
+import java.text.SimpleDateFormat;
+
+import javax.transaction.SystemException;
+
+public class LoadDataMart_DWH extends AbstractStoredProcedure {
+
+    public LoadDataMart_DWH() {
+        super();
+    }
+
+    @Override
+    protected void doCall(Object[] object) throws StoredProcedureException {
+
+
+        String p_source = null;
+        String p_rtldm_id = null;
+        String dt1 = null;
+        String dt2 = null;
+
+        java.sql.Date dateDt1 = null;
+        java.sql.Date dateDt2 = null;
+
+        Array vqlListDel = null;
+        Array vqlListIns = null;
+
+        int dayPartFlag = 0;
+        String actDt = null;
+        Date dateActDt = null;
+        Timestamp dateCurDate = null;
+
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        SimpleDateFormat sdf1 = new SimpleDateFormat("dd.MM.yyyy");
+
+        String prcMsg = null;
+        Transaction trns = null;
+        int insRowCountInt = 0;
+
+        int rtlmrIdInt = 0;
+
+        String currentSql = null;
+
+        // ****************** Чтение и проверка параметров ************************************
+        try{
+            p_source = (String) object[0];
+            if (p_source == null||p_source.length()==0){
+                throw new StoredProcedureException("Не определена БД Denodo для DML");
+            }
+        }catch(Exception e){ // ошибка чтения/преобразования id витрины
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage());
+        }
+
+        try{
+            p_rtldm_id = (String) object[1];
+            if (p_rtldm_id == null||p_rtldm_id.length()==0){
+                throw new StoredProcedureException("Не определен id витрины");
+            }
+        }catch(Exception e){ // ошибка чтения/преобразования id витрины
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage());
+        }
+
+        try{
+            dt1 = (String) object[2];
+            if (dt1 == null){
+                throw new StoredProcedureException("Не определена начальная дата");
+            }
+            dateDt1 =  new java.sql.Date(sdf1.parse(dt1).getTime());
+
+        }catch(Exception e){ // ошибка чтения/преобразования начальной даты
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage());
+        }
+
+        try{
+            dt2 = (String) object[3];
+            if (dt2 == null){
+                throw new StoredProcedureException("Не определена конечная дата");
+            }
+            dateDt2 = new java.sql.Date(sdf1.parse(dt2).getTime());;
+
+        }catch(Exception e){ // ошибка чтения/преобразования конечной даты
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage());
+        }
+
+        if(dateDt2.compareTo(dateDt1)<0){
+            throw new StoredProcedureException("Начальная дата больше конечной");
+        }
+
+
+        try{
+            vqlListDel = (Array) object[4];
+        }catch(Exception e){ // ошибка чтения/преобразования списка команд на удаление -- может быть пустым
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage());
+        }
+
+        try{
+            vqlListIns = (Array) object[5];
+            if (vqlListIns == null){
+                throw new StoredProcedureException("Не определены команды загрузки данных");
+            }
+        }catch(Exception e){ // ошибка чтения/преобразования списка команд на загрузку
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage());
+        }
+
+
+
+        // ****************** проверка актуальности загружаемой витрины ************************************
+        String sqlQueryCurrentDm = "SELECT ADDDAY(rtldm_actual_date, 1) as rtldm_actual_date, rtldm_days_part_flg FROM " + p_source + ".etl_rtl_data_marts WHERE rtldm_id = ?";
+
+        try (ResultSet resultSet = getEnvironment().executeQuery(sqlQueryCurrentDm, new Object[] { p_rtldm_id })) {
+            if (resultSet.next()) {
+                dateActDt = resultSet.getDate(1);
+                dayPartFlag = resultSet.getInt(2);
+
+                actDt = sdf1.format(dateActDt);
+
+            }else{
+                throw new StoredProcedureException("Витрина с RTLDM_ID = "+p_rtldm_id.toString()+" не найдена");
+            }
+/*            if(dateActDt.compareTo(dateDt1) < 0){
+                throw new StoredProcedureException("Витрина с RTLDM_ID = "+p_rtldm_id.toString()+" неактульна на дату " + dt1);
+            } */
+        } catch (Exception e){
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage());
+        }
+
+        // ****************** проверка актуальности родительских витрин ************************************
+        String sqlQueryParentDm = "SELECT t.check_parents_actuality \n" +
+                "FROM " + p_source + ".etl_check_parents_actuality t \n" +
+                "WHERE t.p_rtldm_id = ? and t.p_actual_date = ?" ;
+
+        try (ResultSet resultSet = getEnvironment().executeQuery(sqlQueryParentDm, new Object[] { p_rtldm_id, dt1})) {
+            if (resultSet.next()) {
+                prcMsg = resultSet.getString(1);
+                if(!(prcMsg==null||prcMsg.length()==0)){
+                    throw new StoredProcedureException("Для витрины с RTLDM_ID = "+ p_rtldm_id +", исходные данные неактульны на дату " + dt1+": " + prcMsg);
+                }
+            }
+        } catch (Exception e){
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage());
+        }
+
+        // ****************** проверка зависших процессов ************************************
+        String sqlQueryCheckProc = "SELECT t.rtldmr_id FROM " + p_source + ".etl_rtl_data_mart_runs t WHERE t.rtldmr_status = 'RUNNING' AND t.rtldmr_rtldm_id = ?";
+        try (ResultSet resultSet = getEnvironment().executeQuery(sqlQueryCheckProc, new Object[] { p_rtldm_id })) {
+            if (resultSet.next()) {
+                throw new StoredProcedureException("Витрина с RTLDM_ID = "+p_rtldm_id.toString()+" -- загрузка не завершена");
+            }
+        } catch (Exception e){
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage() + ". " + sqlQueryCheckProc);
+        }
+
+        // ****************** установка начала загрузки ************************************
+        java.util.Date uCurDate = new java.util.Date();
+        dateCurDate = new Timestamp(uCurDate.getTime());
+        String sqlQueryIns = "INSERT INTO " + p_source + ".etl_rtl_data_mart_runs(rtldmr_rtldm_id, rtldmr_dbegin, rtldmr_dend, rtldmr_status, rtldmr_starttime) VALUES (?, ?, ?, ?, ?)";
+
+        try {
+            getEnvironment().executeUpdate(sqlQueryIns, new Object[] {p_rtldm_id, dateDt1, dateDt2, "RUNNING", dateCurDate});
+        } catch (Exception e) {
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage() + ". " + sqlQueryIns);
+        }
+
+        String sqlQueryId = "select rtldmr_id from " + p_source + ".etl_rtl_data_mart_runs where rtldmr_rtldm_id = ? AND rtldmr_dbegin=? AND rtldmr_dend = ? AND rtldmr_status = ? AND rtldmr_starttime = ?";
+        try (ResultSet resultSet = getEnvironment().executeQuery(sqlQueryId, new Object[] {p_rtldm_id, dateDt1, dateDt2, "RUNNING", dateCurDate})) {
+            if (resultSet.next()) {
+                rtlmrIdInt = resultSet.getInt(1);
+            }
+        } catch (Exception e){
+            e.printStackTrace();
+            getEnvironment().log(LOG_ERROR, e.getMessage());
+            throw new StoredProcedureException(e.getMessage() + ". " + sqlQueryId);
+        }
+
+        try{
+
+
+            // ************************* начало загрузки данных *********************************
+            // если дневное партиционирование -- нарезаем партиции
+            if (dayPartFlag > 0){
+                String sqlQueryPart = "SELECT t.create_partitions FROM " + p_source + ".etl_create_partitions t WHERE t.p_rtldm_id = ? AND t.p_start_date = ? AND t.p_end_date = ?";
+                try (ResultSet resultSet = getEnvironment().executeQuery(sqlQueryPart, new Object[] { p_rtldm_id, dt1, dt2})) {
+                    if (resultSet.next()) {
+                        String msg = resultSet.getString(1);
+                        if ( !(msg==null||msg.length()==0)){
+                            throw new StoredProcedureException("Витрина с RTLDM_ID = "+p_rtldm_id.toString()+" -- партиции не созданы " + msg);
+                        }
+                    }
+                } catch (Exception e){
+                    e.printStackTrace();
+                    getEnvironment().log(LOG_ERROR, e.getMessage());
+                    throw new StoredProcedureException(e.getMessage() + ". " + sqlQueryPart);
+                }
+            }
+
+            //очистка данных -- DDL
+            if(vqlListDel==null){  //если нет vql скриптов -- транкейтим партиции
+                String sqlQueryTrunc = "SELECT t.truncate_partitions FROM " + p_source + ".etl_truncate_partitions t WHERE t.p_rtldm_id = ? AND t.p_start_date = ? AND t.p_end_date = ?";
+                try (ResultSet resultSet = getEnvironment().executeQuery(sqlQueryTrunc, new Object[] { p_rtldm_id, dt1, dt2})) {
+                    if (resultSet.next()) {
+                        String msg = resultSet.getString(1);
+                        if ( !(msg==null||msg.length()==0)){
+                            throw new StoredProcedureException("Витрина с RTLDM_ID = "+p_rtldm_id.toString()+" -- партиции не очищены "+msg);
+                        }
+                    }
+                } catch (Exception e){
+                    e.printStackTrace();
+                    getEnvironment().log(LOG_ERROR, e.getMessage());
+                    throw new StoredProcedureException(e.getMessage() + ". " + sqlQueryTrunc);
+                }
+            }
+
+        }catch(Exception e){                        // ошибка возникла до транзакции
+            uCurDate = new java.util.Date();
+            dateCurDate = new Timestamp(uCurDate.getTime());
+            String sqlQueryUpd = "UPDATE " + p_source + ".etl_rtl_data_mart_runs SET rtldmr_status=?, rtldmr_endtime= ?, rtldmr_errmsg = ? WHERE rtldmr_id = ?";
+            try {
+                getEnvironment().executeUpdate(sqlQueryUpd, new Object[] {"ERROR", dateCurDate, e.getMessage(), rtlmrIdInt});
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                getEnvironment().log(LOG_ERROR, ex.getMessage());
+                throw new StoredProcedureException(ex.getMessage() + ". " + sqlQueryUpd);
+            }
+        }
+        // начало транзакции
+        try {
+            trns = getEnvironment().createTransaction();
+
+            //очистка данных -- DML
+            if(vqlListDel!=null){      //если есть vql скрипты -- выполняем их
+
+                try {
+                    Object[] vqlQueryList = (Object[]) vqlListDel.getArray();
+
+                    for (int i = 0; i<vqlQueryList.length ; i++) {
+                        Object element = vqlQueryList[i];
+                        String delQuery = (String) element;
+                        currentSql = delQuery;
+                        getEnvironment().executeUpdate(delQuery);
+                    }
+
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                    getEnvironment().log(LOG_ERROR, e.getMessage());
+                    throw new StoredProcedureException(e.getMessage()+"| SQL:"+currentSql);
+                }
+
+
+            }
+
+
+            // вставка данных
+            try {
+                Object[] vqlQueryList = (Object[]) vqlListIns.getArray();
+
+                for (int i = 0; i<vqlQueryList.length ; i++) {
+                    Object element = vqlQueryList[i];
+                    String insQuery = (String) element;
+                    currentSql = insQuery;
+                    int rCount = getEnvironment().executeUpdate(insQuery);
+                    insRowCountInt = insRowCountInt + rCount;
+                }
+
+            } catch (SQLException e) {
+                e.printStackTrace();
+                getEnvironment().log(LOG_ERROR, e.getMessage());
+                throw new StoredProcedureException(e.getMessage()+"| SQL:"+currentSql);
+            }
+
+
+            uCurDate = new java.util.Date();
+            dateCurDate = new Timestamp(uCurDate.getTime());
+            String sqlQueryUpd = "UPDATE " + p_source + ".etl_rtl_data_mart_runs SET rtldmr_status=?, rtldmr_endtime= ?, rtldmr_rows = ? WHERE rtldmr_id = ?";
+            try {
+                getEnvironment().executeUpdate(sqlQueryUpd, new Object[] {"DONE", dateCurDate, insRowCountInt, rtlmrIdInt});
+            } catch (Exception e) {
+                e.printStackTrace();
+                getEnvironment().log(LOG_ERROR, e.getMessage());
+                throw new StoredProcedureException(e.getMessage() + ". " + sqlQueryUpd);
+            }
+
+            sqlQueryUpd = "UPDATE  " + p_source + ".etl_rtl_data_marts SET rtldm_actual_date=?  WHERE rtldm_id = ?";
+            try {
+                getEnvironment().executeUpdate(sqlQueryUpd, new Object[]  {dateDt2, p_rtldm_id});
+            } catch (Exception e) {
+                e.printStackTrace();
+                getEnvironment().log(LOG_ERROR, e.getMessage());
+                throw new StoredProcedureException(e.getMessage() + ". " + sqlQueryUpd);
+            }
+
+            getProcedureResultSet().addRow(new Object[] { BigInteger.valueOf(insRowCountInt)});
+            trns.commit();
+
+        }catch(Exception e) {
+            try {
+                trns.rollback();
+
+                uCurDate = new java.util.Date();
+                dateCurDate = new Timestamp(uCurDate.getTime());
+                String sqlQueryUpd = "UPDATE " + p_source + ".etl_rtl_data_mart_runs SET rtldmr_status=?, rtldmr_endtime= ?, rtldmr_errmsg = ? WHERE rtldmr_id = ?";
+                try {
+                    getEnvironment().executeUpdate(sqlQueryUpd, new Object[] {"ERROR", dateCurDate, e.getMessage(), rtlmrIdInt});
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                    getEnvironment().log(LOG_ERROR, ex.getMessage());
+                    throw new StoredProcedureException(ex.getMessage() + ". " + sqlQueryUpd);
+                }
+
+
+
+
+            } catch (SystemException f) {
+                e.printStackTrace();
+                getEnvironment().log(LOG_ERROR, e.getMessage());
+                throw new StoredProcedureException(e.getMessage());
+            }
+            e.printStackTrace();
+            throw new StoredProcedureException(e.getMessage());
+        }
+
+    }
+
+    @Override
+    public String getName() {
+        // TODO Implement this method
+        return "LoadDataMart";
+    }
+
+    @Override
+    public String getDescription() {
+        // TODO Implement this method
+        return "Процедура загрузки витрины по RTLDM_ID и диапазону дат с использованием VQL скриптов удаления и вставки данных";
+    }
+
+    @Override
+    public StoredProcedureParameter[] getParameters() {
+        // TODO Implement this method
+        return new StoredProcedureParameter[] {
+                new StoredProcedureParameter("p_source", Types.VARCHAR, StoredProcedureParameter.DIRECTION_IN),
+                new StoredProcedureParameter("p_rtldm_id", Types.VARCHAR, StoredProcedureParameter.DIRECTION_IN),
+                new StoredProcedureParameter("p_dt1", Types.VARCHAR, StoredProcedureParameter.DIRECTION_IN),
+                new StoredProcedureParameter("p_dt2", Types.VARCHAR, StoredProcedureParameter.DIRECTION_IN),
+                new StoredProcedureParameter("p_vqllist_del", Types.ARRAY, StoredProcedureParameter.DIRECTION_IN, true,
+                        new StoredProcedureParameter[] { new StoredProcedureParameter("p_vql_del", Types.VARCHAR,
+                                StoredProcedureParameter.DIRECTION_IN) }),
+                new StoredProcedureParameter("p_vqllist_ins", Types.ARRAY, StoredProcedureParameter.DIRECTION_IN,
+                        new StoredProcedureParameter[] { new StoredProcedureParameter("p_vql_ins", Types.VARCHAR,
+                                StoredProcedureParameter.DIRECTION_IN) }),
+                new StoredProcedureParameter("p_rowcount", Types.BIGINT, StoredProcedureParameter.DIRECTION_OUT)};
+    }
+
+}
