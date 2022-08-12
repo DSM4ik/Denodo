@@ -1,0 +1,37 @@
+CALL qlik.loaddatamart_dwh('qlik', 'dwh_acc', '@p_snap_date_ActualBeg',  '@p_snap_date_ActualEnd'
+
+,\{
+ROW('
+    delete from qlik.bv_dwh_acc
+    where date_beg >= to_timestamp(''dd.MM.yyyy'',''@p_snap_date_del'')
+           ')
+,ROW('
+   update qlik.bv_dwh_acc
+      set date_end  = to_timestamp(''dd.MM.yyyy'',''01.01.5555'')  
+    where  date_end  >= addday(to_timestamp(''dd.MM.yyyy'',''@p_snap_date_upd''), - 1)
+    ')
+\}
+
+,\{
+
+, ROW('
+  insert into qlik.bv_dwh_acc on duplicate key(date_beg,  caccacc  ) 
+  update
+    select date_beg, caccacc,  date_end ,   iacccus,  iaccotd, idsmr,   change_dttm 
+      from qlik.load_dwh_acc_upd
+     where p_sdate = ''@p_snap_date_insupd''
+')
+
+, ROW('
+   insert into qlik.bv_dwh_acc
+    select   date_beg, date_end , caccacc, iacccus, iaccotd, idsmr,    change_dttm 
+      from qlik.load_dwh_acc_ins
+      where p_sdate = ''@p_snap_date_ins''  
+')
+\}
+)
+
+/////////////////////////////////////////////////////
+
+SELECT snap_date FROM qlik.etl_get_days_to_load 
+ WHERE p_rtldm_id = 'dwh_acc'
