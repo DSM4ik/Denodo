@@ -1,0 +1,37 @@
+# Generated with Denodo Platform 8.0 update 20220126.
+
+CREATE OR REPLACE VIEW load_dwh_acc_upd FOLDER = '/2. business/счета/load_счета' DESCRIPTION = 'Представление для вставки новых данных по счетам в хранилище при изменении вектора счета или появления нового счета. Метод фотографирования' 
+    PRIMARY KEY ( 'date_beg' , 'caccacc' ) AS
+    
+    SELECT 
+    
+    dwh.date_beg AS date_beg, 
+    case WHEN ((bv_source.caccprizn = 'З' AND bv_source.daccclose < to_localdate('dd.MM.yyyy', p_snap_date)))
+    THEN cast('localdate', bv_source.daccclose)
+    ELSE addday(to_localdate('dd.MM.yyyy', p_snap_date), -1) END AS date_end, 
+    
+    dwh.caccacc AS caccacc, 
+    dwh.iacccus AS iacccus, 
+    dwh.iaccotd AS iaccotd, dwh.idsmr AS idsmr, 
+        
+    localtimestamp() AS change_dttm, p_snap_date 
+    
+    FROM bv_xxi_acc_acc AS bv_source 
+    RIGHT OUTER JOIN bv_dwh_acc AS dwh ON bv_source.caccacc = dwh.caccacc  
+    
+    WHERE (
+      (to_localdate('dd.MM.yyyy', p_snap_date) between addday(dwh.date_beg, 1) 
+            AND dwh.date_end AND NOT (bv_source.iacccus = dwh.iacccus 
+                                      AND bv_source.iaccotd = dwh.iaccotd AND bv_source.idsmr = dwh.idsmr)
+          ) 
+      
+      OR (bv_source.caccacc is null  AND dwh.date_end = 
+          case WHEN ((bv_source.caccprizn = 'З' AND bv_source.daccclose < to_localdate('dd.MM.yyyy', p_snap_date))) 
+              THEN cast('localdate', bv_source.daccclose)
+               ELSE addday(to_localdate('dd.MM.yyyy', p_snap_date), -1) END)) 
+              
+USING PARAMETERS ( p_snap_date : text) CONTEXT ('formatted' = 'yes');
+
+ALTER VIEW load_dwh_acc_upd
+ LAYOUT ("56afc065-830a-4534-9420-c769e17d18b5" = [130, 106, 200, 200], bv_xxi_acc_acc = [478, 103, 200, 200]);
+
