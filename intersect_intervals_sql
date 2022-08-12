@@ -1,0 +1,91 @@
+
+
+with
+
+--<<таблицы исходных данных
+Tbl_1
+as
+
+(
+Select 1 as ID, 50 as datebeg, 60 as dateend, 'qqqqq1' as F1 from dual
+union
+Select 1 as ID, 61 as datebeg, 80 as dateend, 'aaaaaa1' as F1 from dual
+
+)
+,
+
+Tbl_2
+as
+
+( 
+Select 1 as ID, 30 as datebeg, 50 as dateend, 'hhhh2' as F2 from dual
+union
+Select 1 as ID, 51 as datebeg, 79 as dateend, 'qqqq2' as F2 from dual
+union
+Select 1 as ID, 80 as datebeg, 80 as dateend, 'wwww2' as F2 from dual
+union
+Select 1 as ID, 81 as datebeg, 100 as dateend, 'rrrr2' as F2 from dual
+)
+-->>таблицы исходных данных
+--==============================================
+
+--<<таблица всех дат
+, TableDate as
+(
+select
+s.ID,
+s.datebeg as DateTemp
+
+From 
+Tbl_1 s 
+
+union 
+
+select
+s.ID,
+s.dateend+1 as DateTemp
+From 
+Tbl_1 s 
+
+union
+
+select
+d.ID,
+d.datebeg as DateTemp
+From 
+Tbl_2 d 
+
+union
+
+select
+d.ID,
+d.dateend+1 as DateTemp
+From 
+Tbl_2 d 
+)
+-->>таблица всех дат
+--==============================================
+
+--<<таблица всех возможных интервалов
+,TableInterval  as
+(
+select
+  g.ID,
+  g.DateTemp as DateBeg,
+  (Select min(gn.DateTemp)-1 FROM TableDate  gn where gn.ID=g.ID and gn.DateTemp>g.DateTemp) as DateEnd 
+From
+ TableDate  g
+)
+
+
+Select
+  ti.ID,
+  ti.DateBeg,
+  ti.DateEnd,
+  (select t_1.F1 From Tbl_1 t_1 where t_1.ID=ti.ID and t_1.DateBeg<= ti.DateEnd and ti.DateBeg<=t_1.DateEnd) as F1,
+  (select t_2.F2 From Tbl_2 t_2 where t_2.ID=ti.ID and t_2.DateBeg<= ti.DateEnd and ti.DateBeg<=t_2.DateEnd) as F2
+From
+TableInterval ti
+where not ti.DateEnd is null
+
+
