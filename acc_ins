@@ -1,0 +1,56 @@
+# Generated with Denodo Platform 8.0 update 20220126.
+
+CREATE OR REPLACE VIEW load_dwh_acc_ins FOLDER = '/2. business/счета/load_счета' DESCRIPTION = 'Представление для вставки новых данных по счетам в хранилище при изменении вектора счета или появления нового счета. Метод фотографирования' 
+    PRIMARY KEY ( 'date_beg' , 'caccacc' ) AS 
+    
+   SELECT 
+ 
+   case WHEN ((dwh.caccacc is null  AND dwh_old.caccacc is null )) 
+   THEN cast('localdate',bv_source.daccopen)
+   ELSE to_localdate('dd.MM.yyyy', p_snap_date) END AS date_beg, 
+   
+   case WHEN (bv_source.caccprizn = 'З') 
+   THEN cast('localdate',bv_source.daccclose) 
+   ELSE to_localdate('dd.MM.yyyy', '01.01.5555') END AS date_end,
+   
+   bv_source.caccacc AS caccacc,
+   bv_source.iacccus AS iacccus, 
+   bv_source.iaccotd AS iaccotd, 
+   bv_source.idsmr AS idsmr, 
+   
+   
+   
+   localtimestamp() AS change_dttm, 
+   p_snap_date 
+   
+   FROM (bv_xxi_acc_acc AS bv_source 
+     LEFT OUTER JOIN bv_dwh_acc AS dwh
+     ON (bv_source.caccacc = dwh.caccacc 
+       AND bv_source.iacccus = dwh.iacccus 
+       AND bv_source.iaccotd = dwh.iaccotd 
+       AND bv_source.idsmr = dwh.idsmr 
+       AND addday(to_localdate('dd.MM.yyyy', p_snap_date), -1)  between dwh.date_beg AND dwh.date_end) ) 
+       LEFT OUTER JOIN (
+         SELECT DISTINCT bv_dwh_acc.caccacc, date_end 
+         FROM (
+           SELECT bv_dwh_acc.caccacc, 
+                   max(bv_dwh_acc.date_end) AS date_end 
+           FROM bv_dwh_acc 
+           WHERE (date_end <= addday(to_localdate('dd.MM.yyyy', p_snap_date), -1) 
+                  OR date_end = to_localdate('dd.MM.yyyy', '01.01.5555')) 
+           GROUP BY bv_dwh_acc.caccacc)) AS dwh_old ON dwh_old.caccacc = bv_source.caccacc  
+ 
+ WHERE (dwh.caccacc is null  AND 
+   case WHEN ((dwh.caccacc is null  AND dwh_old.caccacc is null )) 
+        THEN cast('localdate',bv_source.daccopen)
+        ELSE to_localdate('dd.MM.yyyy', p_snap_date) END
+    <= 
+   case WHEN (bv_source.caccprizn = 'З') 
+        THEN cast('localdate',bv_source.daccclose)
+        ELSE to_localdate('dd.MM.yyyy', '01.01.5555') END) 
+ 
+ USING PARAMETERS ( p_snap_date : text) CONTEXT ('formatted' = 'yes');
+
+ALTER VIEW load_dwh_acc_ins
+ LAYOUT (bv_xxi_acc_acc = [69, 50, 200, 200]);
+
